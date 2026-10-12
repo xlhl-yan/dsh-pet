@@ -17,7 +17,9 @@ import {
   defaultDisplayConfig,
   emptyPersist,
   loadPetPersist,
+  PET_MAX_INSTANCES,
   savePetPersist,
+  withPets,
 } from './persist.ts'
 
 function tempDir(): string {
@@ -53,11 +55,15 @@ describe('loadPetPersist', () => {
     try {
       const data = {
         petId: 'otter',
+        pets: [
+          { id: 'otter', right: 10, bottom: 40 },
+          { id: 'whale-girl', right: 220, bottom: 40 },
+        ],
         names: { otter: '泡泡', 'whale-girl': '鲸鱼娘' },
         skins: { otter: 'lanhainishang' },
         affinity: { ...emptyAffinity(), points: 42, pets: 3, feeds: 1, turns: 10 },
         treats: { ...emptyTreatLedger(), treats: 7, lastTreatGrantAt: 1234, turnsAtLastTreatGrant: 9 },
-        display: { visible: false, size: 200, right: 10, bottom: 40, bubbleScale: 1.25 },
+        display: { visible: false, size: 200, right: 10, bottom: 40, bubbleScale: 1.25, edgeMarginLeft: 30, edgeMarginRight: 12 },
         gameplay: {
           otter: { stats: { hunger: 55.5 }, currencies: { coins: 12 }, mode: 'work' as const, settledAt: 777 },
         },
@@ -223,6 +229,139 @@ describe('loadPetPersist', () => {
         display: { visible: true, size: 1e9, right: 0, bottom: 0 },
       }), 'utf8')
       expect(loadPetPersist(dir).display.size).toBe(DISPLAY_SIZE_MAX)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('multi-pet persistence', () => {
+  it('migrates a single-pet document into a one-element list', () => {
+    const dir = tempDir()
+    try {
+      // The pre-coexistence shape: a bare petId, no pets array.
+      writeFileSync(join(dir, 'pet.json'), JSON.stringify({
+        petId: 'ouo-neko',
+        display: { visible: true, size: 160, right: 30, bottom: 50, bubbleScale: 1 },
+      }), 'utf8')
+      const loaded = loadPetPersist(dir)
+      expect(loaded.pets).toEqual([{ id: 'ouo-neko', right: 30, bottom: 50 }])
+      // A document written before the edge margins existed keeps the shipped
+      // gaps rather than collapsing to 0 (which would pin pets to the edges).
+      expect(loaded.display.edgeMarginLeft).toBe(defaultDisplayConfig.edgeMarginLeft)
+      expect(loaded.display.edgeMarginRight).toBe(defaultDisplayConfig.edgeMarginRight)
+      // The migrated pet keeps the position it was already rendering at.
+      expect(loaded.petId).toBe('ouo-neko')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps each pet at its own position across a round trip', () => {
+    const dir = tempDir()
+    try {
+      const data = emptyPersist()
+      const twoPets = withPets(data, [
+        { id: 'whale-girl', right: 24, bottom: 120 },
+        { id: 'ouo-neko', right: 300, bottom: 60 },
+      ])
+      savePetPersist(twoPets, dir)
+      const loaded = loadPetPersist(dir)
+      expect(loaded.pets).toEqual([
+        { id: 'whale-girl', right: 24, bottom: 120 },
+        { id: 'ouo-neko', right: 300, bottom: 60 },
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('drops duplicate ids so one pet cannot be rendered twice', () => {
+    const persist = withPets(emptyPersist(), [
+      { id: 'whale-girl', right: 1, bottom: 1 },
+      { id: 'whale-girl', right: 2, bottom: 2 },
+      { id: 'ouo-neko', right: 3, bottom: 3 },
+    ])
+    // First occurrence wins; the later duplicate is discarded rather than
+    // producing two sprites that share an id and fight over one position.
+    expect(persist.pets).toEqual([
+      { id: 'whale-girl', right: 1, bottom: 1 },
+      { id: 'ouo-neko', right: 3, bottom: 3 },
+    ])
+  })
+
+  it('caps the list so a corrupt file cannot ask for unbounded sprites', () => {
+    const many = Array.from({ length: PET_MAX_INSTANCES + 5 }, (_, index) => ({
+      id: 'pet-' + index,
+      right: index,
+      bottom: index,
+    }))
+    expect(withPets(emptyPersist(), many).pets).toHaveLength(PET_MAX_INSTANCES)
+  })
+
+  it('refuses to empty the list: hiding is not the same as removing', () => {
+    const persist = emptyPersist()
+    // An empty list would leave the plugin with no primary pet, and every
+    // pre-coexistence read path assumes one exists.
+    expect(withPets(persist, []).pets).toEqual(persist.pets)
+  })
+
+  it('keeps petId in step with the first pet', () => {
+    const persist = withPets(emptyPersist(), [
+      { id: 'ouo-neko', right: 5, bottom: 5 },
+      { id: 'whale-girl', right: 6, bottom: 6 },
+    ])
+    expect(persist.petId).toBe('ouo-neko')
+  })
+
+  it('drops malformed entries instead of failing the whole document', () => {
+    const dir = tempDir()
+    try {
+      writeFileSync(join(dir, 'pet.json'), JSON.stringify({
+        pets: [
+          { id: 'whale-girl', right: 10, bottom: 20 },
+          { id: '', right: 1, bottom: 1 },
+          { right: 2, bottom: 2 },
+          'not-an-object',
+          null,
+          { id: 'ouo-neko' },
+        ],
+        display: { visible: true, size: 160, right: 7, bottom: 8, bubbleScale: 1 },
+      }), 'utf8')
+      const loaded = loadPetPersist(dir)
+      // The valid entries survive; a pet with no declared insets inherits the
+      // display fallback rather than landing at the origin.
+      expect(loaded.pets).toEqual([
+        { id: 'whale-girl', right: 10, bottom: 20 },
+        { id: 'ouo-neko', right: 7, bottom: 8 },
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the default pet when the list is entirely unusable', () => {
+    const dir = tempDir()
+    try {
+      writeFileSync(join(dir, 'pet.json'), JSON.stringify({ pets: [] }), 'utf8')
+      const loaded = loadPetPersist(dir)
+      expect(loaded.pets).toHaveLength(1)
+      expect(loaded.petId).toBe(DEFAULT_PET_ID)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores a stored petId that disagrees with the list', () => {
+    const dir = tempDir()
+    try {
+      // A hand-edited file could name a primary pet that is not on screen.
+      // Trusting it would render a pet the list never placed.
+      writeFileSync(join(dir, 'pet.json'), JSON.stringify({
+        petId: 'ghost-pet',
+        pets: [{ id: 'ouo-neko', right: 4, bottom: 4 }],
+      }), 'utf8')
+      expect(loadPetPersist(dir).petId).toBe('ouo-neko')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

@@ -19,7 +19,7 @@ import z from '@deepseek-ai/schemastery'
 import { DEFAULT_STATUS_BUBBLE_MODE, PET_SETTINGS_NAMESPACE, PetService, STATUS_BUBBLE_MODES, statusBubbleMode, type PetConfig, type PetSettingsSection, type PetStatusBubbleMode } from './service.ts'
 import { makePetRoutes } from './routes.ts'
 import { loadPetRegistry, petPackageRoot } from './registry.ts'
-import { BUBBLE_SCALE_MAX, BUBBLE_SCALE_MIN, DEFAULT_PET_ID, DISPLAY_INSET_MAX, DISPLAY_SIZE_MAX, DISPLAY_SIZE_MIN, type PetDisplayConfig } from './persist.ts'
+import { BUBBLE_SCALE_MAX, BUBBLE_SCALE_MIN, DEFAULT_PET_ID, DISPLAY_INSET_MAX, DISPLAY_SIZE_MAX, DISPLAY_SIZE_MIN, EDGE_MARGIN_MAX, EDGE_MARGIN_MIN, type PetDisplayConfig } from './persist.ts'
 import { mountOnce } from './mount-once.ts'
 
 export { PetService, MAX_SESSION_BUBBLES, DEFAULT_STATUS_BUBBLE_MODE, STATUS_BUBBLE_MODES, statusBubbleMode } from './service.ts'
@@ -138,10 +138,13 @@ export const PET_FORM_DEFAULTS = {
   right: 24,
   bottom: 20,
   bubbleScale: 1,
+  edgeMarginLeft: 24,
+  edgeMarginRight: 8,
   petId: DEFAULT_PET_ID,
   enabled: true,
   decorationEnabled: true,
   statusBubbles: DEFAULT_STATUS_BUBBLE_MODE,
+  autonomous: true,
 } as const
 
 /**
@@ -164,6 +167,11 @@ export interface PetFormConfig {
    * the switch existed.
    */
   statusBubbles?: LiveField<PetStatusBubbleMode | undefined>
+  /**
+   * Run the pets independently of the DSH session lifecycle; defaults to true,
+   * so the pets are companions rather than an agent status readout.
+   */
+  autonomous?: LiveField<boolean>
   /** Master switch for the pet surface. */
   visible?: LiveField<boolean>
   /** Scale of the rendered pet in px (sprite cell height). */
@@ -174,6 +182,10 @@ export interface PetFormConfig {
   bottom?: LiveField<number>
   /** Bubble typography multiplier on the automatic size following (#1549). */
   bubbleScale?: LiveField<number>
+  /** Gap kept between a sprite and the left viewport edge, px. */
+  edgeMarginLeft?: LiveField<number>
+  /** Gap kept between a sprite and the right viewport edge, px. */
+  edgeMarginRight?: LiveField<number>
   /** Selected pet id (a registry entry; the service clamps stale values). */
   petId?: LiveField<string | undefined>
 }
@@ -199,6 +211,12 @@ export const Config = z.object({
   right: z.number().step(1).min(0).max(DISPLAY_INSET_MAX).default(PET_FORM_DEFAULTS.right).volatile(),
   bottom: z.number().step(1).min(0).max(DISPLAY_INSET_MAX).default(PET_FORM_DEFAULTS.bottom).volatile(),
   bubbleScale: z.number().step(0.05).min(BUBBLE_SCALE_MIN).max(BUBBLE_SCALE_MAX).default(PET_FORM_DEFAULTS.bubbleScale).volatile(),
+  // The gaps a pet keeps from the viewport edges. They bound dragging and
+  // roaming, and pull a stored out-of-range position back on load, so they are
+  // user-facing rather than constants: how much room a pet needs depends on the
+  // surrounding chrome.
+  edgeMarginLeft: z.number().step(1).min(EDGE_MARGIN_MIN).max(EDGE_MARGIN_MAX).default(PET_FORM_DEFAULTS.edgeMarginLeft).volatile(),
+  edgeMarginRight: z.number().step(1).min(EDGE_MARGIN_MIN).max(EDGE_MARGIN_MAX).default(PET_FORM_DEFAULTS.edgeMarginRight).volatile(),
   // An absent profile choice must leave the selection persisted in pet.json
   // intact across restarts (aggregate rows have no served Host pet form).
   petId: z.string().volatile(),
@@ -209,6 +227,10 @@ export const Config = z.object({
   // bubble surface) needs, and it hides ONLY those bubbles — the sprite, the
   // interaction feedback and a sibling plugin's announcement bubble stay.
   statusBubbles: z.union([...STATUS_BUBBLE_MODES]).default(PET_FORM_DEFAULTS.statusBubbles).volatile(),
+  // The pets run independently of the session lifecycle by default: they are
+  // companions, not an agent status indicator. Turning this off restores the
+  // original session-driven animation and status readout.
+  autonomous: z.boolean().default(PET_FORM_DEFAULTS.autonomous).volatile(),
 })
 
 /**
@@ -300,6 +322,8 @@ export function petSettingsSection(
     right: displayField('right', config.right, persisted, committed),
     bottom: displayField('bottom', config.bottom, persisted, committed),
     bubbleScale: displayField('bubbleScale', config.bubbleScale, persisted, committed),
+    edgeMarginLeft: displayField('edgeMarginLeft', config.edgeMarginLeft, persisted, committed),
+    edgeMarginRight: displayField('edgeMarginRight', config.edgeMarginRight, persisted, committed),
     petId: readLive(config.petId, fallbackPetId),
     enabled,
     decorationEnabled: readLive(config.decorationEnabled, PET_FORM_DEFAULTS.decorationEnabled),
@@ -308,6 +332,9 @@ export function petSettingsSection(
     // so it reads the live value directly and normalizes anything unknown to
     // the shipped default instead of trusting the document.
     statusBubbles: statusBubbleMode(readLive<PetStatusBubbleMode | undefined>(config.statusBubbles, undefined)),
+    // Like the bubble switch, a plugin-level preference with no pet.json twin:
+    // read the live value and default to autonomous.
+    autonomous: readLive(config.autonomous, PET_FORM_DEFAULTS.autonomous),
   }
 }
 
@@ -357,7 +384,7 @@ function servedRow(ctx: Context): ServedSettingsRow | undefined {
 export const apply = mountOnce('@linxin666/dsh-pet', applyImpl)
 
 /** Plugin config: the tuning block a profile may declare plus the pet's settings fields. */
-export type PetPluginConfig = Omit<PetConfig, 'enabled' | 'decorationEnabled'> & PetFormConfig
+export type PetPluginConfig = Omit<PetConfig, 'enabled' | 'decorationEnabled' | 'autonomous'> & PetFormConfig
 
 function applyImpl(ctx: Context, config: PetPluginConfig = {}): void {
   const registry = config.registry
@@ -370,6 +397,7 @@ function applyImpl(ctx: Context, config: PetPluginConfig = {}): void {
     enabled: readLive(config.enabled, PET_FORM_DEFAULTS.enabled),
     decorationEnabled: readLive(config.decorationEnabled, PET_FORM_DEFAULTS.decorationEnabled),
     statusBubbles: statusBubbleMode(readLive<PetStatusBubbleMode | undefined>(config.statusBubbles, undefined)),
+    autonomous: readLive(config.autonomous, PET_FORM_DEFAULTS.autonomous),
     registry,
   })
   // The mirror back into the settings document (see syncSettingsFromPet) has to

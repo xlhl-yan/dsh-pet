@@ -64,6 +64,28 @@ export interface GameplayBus {
    * (PetSprite); absent while the sprite is unmounted.
    */
   walk?: (direction: PetRoamDirection, distance: number, speed: number) => number
+  /**
+   * The animation this pet is ACTUALLY playing, pushed by the sprite whenever
+   * its resolved track changes.
+   *
+   * This is the only honest source for the interaction rules. The host's
+   * `instance.animation` is `idle` whenever `autonomous` is on (the host serves
+   * no session activity), and the sprite's own override — a roam walk, a
+   * gameplay act, a dialogue line — never reaches the host at all. A rule that
+   * read the snapshot would therefore never see a `jumping` pet and could never
+   * fire. Registered by the chrome (PetSprite); absent while unmounted.
+   */
+  onAnimation?: (animation: string) => void
+  /**
+   * True while an ambient roam walk is in flight.
+   *
+   * The roam and the spontaneous acts both steer the same track-override slot
+   * and neither can see the other's timers, so without a shared flag a pet that
+   * started an act mid-walk would cut the walk short — and, worse, release the
+   * slot afterwards, wiping the walk's own track. The acts read this and stand
+   * down instead.
+   */
+  roaming?: boolean
 }
 
 type HudPage = 'root' | 'shop' | 'skins'
@@ -172,7 +194,7 @@ export function GameplayHud(props: {
     const speak = (phrases?: string[]): void => {
       if (phrases !== undefined && phrases.length > 0) {
         const phrase = phrases[Math.floor(Math.random() * phrases.length)]!
-        store.actions.setFeedback({ text: phrase, kind: 'none', at: Date.now() })
+        store.actions.setFeedback(definition.id, { text: phrase, kind: 'none', at: Date.now() })
       }
     }
     // Total play time of a track in ms (its fallback lands back in the skin
@@ -224,7 +246,7 @@ export function GameplayHud(props: {
         if (result.hit !== true) return
         if (result.state !== undefined) holdTrack(result.state, result.stateMs ?? 3000)
         if (result.phrase !== undefined) {
-          store.actions.setFeedback({ text: result.phrase, kind: 'none', at: Date.now() })
+          store.actions.setFeedback(definition.id, { text: result.phrase, kind: 'none', at: Date.now() })
         }
       }, () => undefined)
     }
@@ -331,7 +353,7 @@ export function GameplayHud(props: {
       // Acts with a phrase pool speak one line while they play (miku parity).
       if (pickedAct.phrases !== undefined && pickedAct.phrases.length > 0) {
         const phrase = pickedAct.phrases[Math.floor(Math.random() * pickedAct.phrases.length)]!
-        store.actions.setFeedback({ text: phrase, kind: 'none', at: Date.now() })
+        store.actions.setFeedback(definition.id, { text: phrase, kind: 'none', at: Date.now() })
       }
     }, director.intervalMs)
     return () => {

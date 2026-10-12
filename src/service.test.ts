@@ -126,3 +126,147 @@ describe('PetService remark layers', () => {
     expect((await service.interact('feed')).reaction).toBe(voice.noTreats[0])
   })
 })
+
+/** A service over the shipped pets with an isolated persistence directory. */
+function service(): PetService {
+  const registry = loadPetRegistry({
+    packageRoot: petPackageRoot(import.meta.url),
+    petsDir: '',
+    dshPetsDir: '',
+  })
+  return new PetService(fakeRootContext(), { registry, persistDir: tempDir() })
+}
+
+/** Two registry ids that exist in the shipped asset set. */
+function twoPetIds(svc: PetService): [string, string] {
+  const ids = svc.registrySnapshot().entries.map(entry => entry.id)
+  expect(ids.length).toBeGreaterThanOrEqual(2)
+  return [ids[0]!, ids[1]!]
+}
+
+describe('PetService multi-pet coexistence', () => {
+  it('reports every on-screen pet in its own state row', async () => {
+    const svc = service()
+    const [a, b] = twoPetIds(svc)
+    await svc.setPets([
+      { id: a, right: 10, bottom: 20 },
+      { id: b, right: 300, bottom: 40 },
+    ])
+    const view = await svc.state()
+    expect(view.pets?.map(pet => pet.id)).toEqual([a, b])
+    // Each row carries its own position, which is what lets two sprites sit
+    // apart instead of stacking on the shared display fallback.
+    expect(view.pets?.map(pet => pet.right)).toEqual([10, 300])
+    expect(view.pets?.map(pet => pet.bottom)).toEqual([20, 40])
+    // The singular fields mirror pets[0] for a browser half that predates the
+    // list.
+    expect(view.pet.id).toBe(a)
+  })
+
+  it('drops unknown ids rather than wedging the list', async () => {
+    const svc = service()
+    const [a] = twoPetIds(svc)
+    const result = await svc.setPets([
+      { id: a, right: 10, bottom: 20 },
+      { id: 'no-such-pet', right: 5, bottom: 5 },
+    ])
+    expect(result.pets.map(pet => pet.id)).toEqual([a])
+  })
+
+  it('keeps the current list when every id is unknown', async () => {
+    const svc = service()
+    const [a] = twoPetIds(svc)
+    await svc.setPets([{ id: a, right: 1, bottom: 2 }])
+    const result = await svc.setPets([{ id: 'ghost', right: 9, bottom: 9 }])
+    // "No pets at all" is expressed by hiding, so an unusable list must not
+    // empty the screen.
+    expect(result.pets.map(pet => pet.id)).toEqual([a])
+  })
+
+  it('moves one pet without disturbing the other', async () => {
+    const svc = service()
+    const [a, b] = twoPetIds(svc)
+    await svc.setPets([
+      { id: a, right: 10, bottom: 20 },
+      { id: b, right: 300, bottom: 40 },
+    ])
+    await svc.setConfig({ right: 700, bottom: 100 }, b)
+    const view = await svc.state()
+    // The whole point of the petId-scoped write: dragging one sprite must not
+    // drag the other.
+    expect(view.pets?.find(pet => pet.id === b)).toMatchObject({ right: 700, bottom: 100 })
+    expect(view.pets?.find(pet => pet.id === a)).toMatchObject({ right: 10, bottom: 20 })
+  })
+
+  it('renames one pet without renaming the other', async () => {
+    const svc = service()
+    const [a, b] = twoPetIds(svc)
+    await svc.setPets([
+      { id: a, right: 10, bottom: 20 },
+      { id: b, right: 300, bottom: 40 },
+    ])
+    const originalA = svc.petName(a)
+    expect(await svc.setName('新名字', b)).toEqual({ ok: true, name: '新名字' })
+    const view = await svc.state()
+    expect(view.pets?.find(pet => pet.id === b)?.name).toBe('新名字')
+    expect(view.pets?.find(pet => pet.id === a)?.name).toBe(originalA)
+  })
+
+  it('rejects a rename aimed at a pet that is not on screen', async () => {
+    const svc = service()
+    const [a, b] = twoPetIds(svc)
+    await svc.setPets([{ id: a, right: 1, bottom: 2 }])
+    // Storing a name nothing renders would be dead state.
+    expect(await svc.setName('幽灵', b)).toEqual({ ok: false, error: 'unknown-pet' })
+  })
+
+  it('collapses to one pet when the single-pet selection RPC is used', async () => {
+    const svc = service()
+    const [a, b] = twoPetIds(svc)
+    await svc.setPets([
+      { id: a, right: 10, bottom: 20 },
+      { id: b, right: 300, bottom: 40 },
+    ])
+    // setPetId predates coexistence and still means "make this the only pet".
+    expect(await svc.setPetId(b)).toEqual({ ok: true, petId: b })
+    const view = await svc.state()
+    expect(view.pets?.map(pet => pet.id)).toEqual([b])
+  })
+
+  it('keeps the second pet when an unrelated settings edit lands', async () => {
+    const svc = service()
+    const [a, b] = twoPetIds(svc)
+    await svc.setPets([
+      { id: a, right: 10, bottom: 20 },
+      { id: b, right: 300, bottom: 40 },
+    ])
+    // The settings surface commits the whole section on every change, always
+    // carrying the primary petId. Treating that as a selection change would
+    // silently drop the user's second pet on a mere size tweak.
+    svc.applySettingsSection({ petId: a, visible: true, size: 200, right: 10, bottom: 20 })
+    const view = await svc.state()
+    expect(view.pets?.map(pet => pet.id)).toEqual([a, b])
+    expect(view.display.size).toBe(200)
+  })
+
+  it('persists the list across a restart', async () => {
+    const dir = tempDir()
+    const registry = loadPetRegistry({
+      packageRoot: petPackageRoot(import.meta.url),
+      petsDir: '',
+      dshPetsDir: '',
+    })
+    const first = new PetService(fakeRootContext(), { registry, persistDir: dir })
+    const [a, b] = twoPetIds(first)
+    await first.setPets([
+      { id: a, right: 10, bottom: 20 },
+      { id: b, right: 300, bottom: 40 },
+    ])
+    // A fresh service over the same directory must restore both pets and their
+    // positions, not just the primary one.
+    const second = new PetService(fakeRootContext(), { registry, persistDir: dir })
+    const view = await second.state()
+    expect(view.pets?.map(pet => pet.id)).toEqual([a, b])
+    expect(view.pets?.map(pet => pet.right)).toEqual([10, 300])
+  })
+})

@@ -224,7 +224,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { enabled: false, persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, enabled: false, persistDir: dir })
       ctx.emit('session/event', session, turnEnd(1, { kind: 'completed' }, 1))
       expect((await service.state()).animation).toBe('idle')
       expect((await service.state()).affinity.turns).toBe(0)
@@ -248,7 +248,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('stale')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', session, toolCall(1, 1, 'call-stale', 'shell', 1))
       expect(await service.state()).toMatchObject({
         animation: 'running-right',
@@ -274,7 +274,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
 
       ctx.emit('session/event', session, turnStart(1, 1))
       expect(await service.state()).toMatchObject({ animation: 'waiting', bubble: '准备开始' })
@@ -316,7 +316,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       // The SITUATION wakes the whisper, not the words: a reasoning chunk
       // speaks the thinking category while the status bubble reports as usual.
       ctx.emit('agent/assistant-stream', assistantChunk(session, 1, 1, {
@@ -350,7 +350,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('agent/assistant-stream', assistantChunk(session, 1, 1, {
         type: 'text-delta', index: 0, text: '在整理回复',
       }, 1))
@@ -372,7 +372,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', session, toolCall(1, 1, 'call-1', 'shell', 1))
       ctx.emit('session/event', session, toolCall(1, 1, 'call-2', 'search', 2))
 
@@ -414,7 +414,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionA = makeSession('s-a')
     const sessionB = makeSession('s-b')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
 
       ctx.emit('agent/assistant-stream', assistantChunk(sessionA, 1, 1, {
         type: 'reasoning-delta', index: 0, text: 'A',
@@ -461,7 +461,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionA = makeSession('s-a')
     const sessionB = makeSession('s-b')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
 
       ctx.emit('agent/assistant-stream', assistantChunk(sessionA, 1, 1, {
         type: 'reasoning-delta', index: 0, text: 'A',
@@ -514,7 +514,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionA = makeSession('s-a')
     const sessionB = makeSession('s-b')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
 
       ctx.emit('agent/assistant-stream', assistantChunk(sessionA, 1, 1, {
         type: 'reasoning-delta', index: 0, text: 'A',
@@ -541,7 +541,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionA = makeSession('s-a')
     const sessionB = makeSession('s-b')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
 
       ctx.emit('session/event', sessionA, toolCall(1, 1, 'call-a', 'search', 1))
       ctx.emit('agent/assistant-stream', assistantChunk(sessionB, 1, 1, {
@@ -565,7 +565,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s-green')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', session, toolCall(1, 1, 'call-t', 'run_code', 1, '{"command":"npm test"}'))
       // 10 s later: category (9 s) and outcome (5 s) cooldowns have elapsed.
       vi.setSystemTime(10_000)
@@ -585,7 +585,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s-fail')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', session, toolCall(1, 1, 'call-f', 'bash', 1, '{"command":"node server.js"}'))
       vi.setSystemTime(10_000)
       // No `error` detail accompanies this result: the failure identity lives
@@ -606,7 +606,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s-done')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', session, turnEnd(1, { kind: 'completed' }, 1))
       const view = await service.state()
       expect(view.sessions?.[0]?.whisper).toBe(WHISPER_RESULT_POOLS.done[0])
@@ -628,7 +628,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionB = makeSession('s-b')
     const child = makeSubagentSession('s-child', 's-b')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
 
       ctx.emit('agent/assistant-stream', assistantChunk(sessionA, 1, 1, {
         type: 'reasoning-delta', index: 0, text: 'A',
@@ -661,7 +661,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const child = makeSubagentSession('s-child', 's-parent')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', child, toolCall(1, 1, 'call-c', 'run_code', 1))
 
       const view = await service.state()
@@ -680,7 +680,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionA = makeSession('s-a')
     const sessionB = makeSession('s-b')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('agent/assistant-stream', assistantChunk(sessionA, 1, 1, {
         type: 'reasoning-delta', index: 0, text: 'A',
       }, 1))
@@ -707,7 +707,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       for (let index = 0; index < 14; index++) {
         const session = makeSession('s-' + index)
         ctx.emit('session/event', session, toolCall(1, 1, 'call-' + index, 'shell', index + 1))
@@ -726,7 +726,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       // The otter's custom pet line replaces only its own slot.
       await service.setPetId('otter')
       const otterPet = await service.interact('pet')
@@ -751,7 +751,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionA = makeSession('reuse')
     const sessionB = makeSession('reuse')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
 
       ctx.emit('session/event', sessionA, turnEnd(1, { kind: 'completed' }, 1))
       expect((await service.state()).affinity.turns).toBe(1)
@@ -772,7 +772,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', session, toolCall(1, 1, 'call-1', 'grep', 1))
       ctx.emit('session/event', session, turnEnd(1, {
         kind: 'aborted', reason: { kind: 'user' },
@@ -795,7 +795,7 @@ describe('PetService (rc.6 session events)', () => {
     const sessionA = makeSession('s-a')
     const sessionB = makeSession('s-b')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', sessionA, toolCall(1, 1, 'call-a', 'grep', 1))
       ctx.emit('session/event', sessionB, toolCall(1, 1, 'call-b', 'shell', 1))
       ctx.emit('session/event', sessionA, turnEnd(1, {
@@ -824,7 +824,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       const cases: Array<{
         reason: TurnEndReason
         expected: { animation: string; bubble: string }
@@ -864,7 +864,7 @@ describe('PetService (rc.6 session events)', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', failed, turnEnd(1, {
         kind: 'error', error: { message: 'boom', code: 'UNKNOWN' },
       }, 1))
@@ -900,7 +900,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       for (let turn = 1; turn <= 30; turn++) {
         ctx.emit('session/event', session, turnEnd(turn, { kind: 'completed' }, turn))
       }
@@ -921,7 +921,7 @@ describe('PetService (rc.6 session events)', () => {
     const legacySession = makeSession('legacy')
     const officialSession = makeSession('official')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', legacySession, activity('done', 1, '完成啦'))
       ctx.emit('session/event', legacySession, activity('done', 2, '完成啦'))
       expect((await service.state()).affinity.turns).toBe(1)
@@ -940,7 +940,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('toggle-dedup')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       ctx.emit('session/event', session, turnEnd(1, { kind: 'completed' }, 1))
       expect((await service.state()).affinity.turns).toBe(1)
 
@@ -959,7 +959,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       for (let turn = 1; turn <= 30; turn++) {
         ctx.emit('session/event', session, turnEnd(turn, { kind: 'completed' }, turn))
       }
@@ -981,7 +981,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       const res = await service.interact('feed')
       expect(res.delta).toBe(0)
       expect(res.affinity.feeds).toBe(0)
@@ -995,7 +995,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       expect(existsSync(join(dir, 'pet.json'))).toBe(false)
       await service.state()
       // Reads must not settle the economy nor write pet.json: settlement
@@ -1015,7 +1015,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, { persistDir: dir })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir })
       expect(existsSync(join(dir, 'pet.json'))).toBe(false)
       ctx.emit('session/event', session, turnEnd(1, { kind: 'completed' }, 1))
       // The completed-turn reward is an explicit economic event: it settles
@@ -1031,7 +1031,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       const view = await service.state()
       expect(view.pet.id).toBe('whale-girl')
       expect(view.pet.displayName).toBe('鲸鱼娘')
@@ -1048,7 +1048,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       expect((await service.setName('小鲸')).ok).toBe(true)
       expect((await service.state()).name).toBe('小鲸')
 
@@ -1076,7 +1076,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       const result = await service.setPetId('dragon')
       expect(result.ok).toBe(false)
       expect((await service.state()).pet.id).toBe('whale-girl')
@@ -1089,7 +1089,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       service.applySettingsSection({
         petId: 'otter',
         visible: true,
@@ -1108,7 +1108,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     try {
       writeFileSync(join(dir, 'pet.json'), JSON.stringify({ petId: 'gone', display: { visible: true, size: 160, right: 24, bottom: 20 } }), 'utf8')
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       expect((await service.state()).pet.id).toBe('whale-girl')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -1120,7 +1120,7 @@ describe('PetService (rc.6 session events)', () => {
     const dir = tempDir()
     try {
       writeFileSync(join(dir, 'pet.json'), JSON.stringify({ name: '泡泡' }), 'utf8')
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       expect((await service.state()).name).toBe('泡泡')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -1131,7 +1131,7 @@ describe('PetService (rc.6 session events)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: fixtureRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: fixtureRegistry() })
       const result = await service.setName('   ')
       expect(result.ok).toBe(false)
       expect(service.petName()).toBe('鲸鱼娘')
@@ -1166,7 +1166,7 @@ describe('voice packs in PetService (pet-center M4, issue #677)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, {
+      const service = new PetService(ctx, { autonomous: false,
         persistDir: dir,
         registry: voicedRegistry('talker', { status: { prepare: ['自定义开工'], done: ['自定义完工'] } }),
       })
@@ -1199,7 +1199,7 @@ describe('voice packs in PetService (pet-center M4, issue #677)', () => {
         byId: id => entries.find(entry => entry.id === id),
         defaultEntry: () => entries[0]!,
       }
-      const service = new PetService(ctx, { persistDir: dir, registry })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry })
       ctx.emit('session/event', session, turnEnd(1, { kind: 'completed' }, 1))
       expect(await service.state()).toMatchObject({ bubble: '自定义完工' })
       await service.setPetId('otter')
@@ -1221,7 +1221,7 @@ describe('voice packs in PetService (pet-center M4, issue #677)', () => {
       const registry = voicedRegistry('plain', undefined, {
         globalVoice: normalizeVoicePack({ status: { done: ['全局完工'] } }),
       })
-      const service = new PetService(ctx, { persistDir: dir, registry })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry })
       ctx.emit('session/event', session, turnEnd(1, { kind: 'completed' }, 1))
       expect(await service.state()).toMatchObject({ bubble: '全局完工' })
     } finally {
@@ -1236,7 +1236,7 @@ describe('voice packs in PetService (pet-center M4, issue #677)', () => {
       const registry = voicedRegistry('plain', { panel: { labels: { feed: '宠物投喂' } } }, {
         globalVoice: normalizeVoicePack({ panel: { labels: { feed: '全局投喂', hide: '全局藏' } } }),
       })
-      const service = new PetService(ctx, { persistDir: dir, registry })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry })
       const pets = await service.pets()
       const plain = pets.find(pet => pet.id === 'plain')
       expect(plain).toBeDefined()
@@ -1259,7 +1259,7 @@ describe('voice packs in PetService (pet-center M4, issue #677)', () => {
     const dir = tempDir()
     const session = makeSession('s1')
     try {
-      const service = new PetService(ctx, {
+      const service = new PetService(ctx, { autonomous: false,
         persistDir: dir,
         registry: voicedRegistry('talker', {
           whispers: { categories: { thinking: ['自定义思考'] } },
@@ -1324,7 +1324,7 @@ describe('status decorations in PetService (pet-center M5, #567)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: decorationRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: decorationRegistry() })
       const view = await service.state()
       expect(view.decoration?.id).toBe('whale')
       expect(view.decoration?.entryUrl).toBe('/api/pet/decoration/whale/whale-frames.png')
@@ -1338,7 +1338,7 @@ describe('status decorations in PetService (pet-center M5, #567)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: decorationRegistry(), decorationEnabled: false })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: decorationRegistry(), decorationEnabled: false })
       expect((await service.state()).decoration).toBeUndefined()
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -1349,7 +1349,7 @@ describe('status decorations in PetService (pet-center M5, #567)', () => {
     const ctx = new Context()
     const dir = tempDir()
     try {
-      const service = new PetService(ctx, { persistDir: dir, registry: decorationRegistry() })
+      const service = new PetService(ctx, { autonomous: false, persistDir: dir, registry: decorationRegistry() })
       service.applySettingsSection({
         visible: true,
         size: 160,

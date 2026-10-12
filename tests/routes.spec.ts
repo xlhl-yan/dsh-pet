@@ -51,7 +51,7 @@ beforeAll(async () => {
 
   const ctx = new Context()
   const registry = loadPetRegistry({ packageRoot: dir, petsDir: '', dshPetsDir: '' })
-  service = new PetService(ctx, { persistDir: join(dir, 'home'), registry })
+  service = new PetService(ctx, { autonomous: false, persistDir: join(dir, 'home'), registry })
   routes = makePetRoutes({ service, ctx })
   server = createServer((req, res) => {
     const pathname = (req.url ?? '').split('?')[0]!
@@ -446,6 +446,43 @@ describe('post body failure contract (shared readJsonBody migration)', () => {  
     const res = await fetch(url('/api/pet/set-config'), { method: 'POST' })
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ ok: true })
+  })
+
+  /**
+   * Every display field the schema accepts must survive this endpoint.
+   *
+   * The route rebuilds the patch field by field rather than passing the body
+   * through, so a field the route forgets is silently dropped: the caller gets
+   * `{ ok: true }` and the value never changes. That is exactly how the edge
+   * margins were lost, and it cost an hour of looking at the persistence layer.
+   */
+  it('passes every display field through to the service', async () => {
+    const res = await fetch(url('/api/pet/set-config'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        size: 200,
+        right: 30,
+        bottom: 40,
+        visible: true,
+        bubbleScale: 1.5,
+        edgeMarginLeft: 60,
+        edgeMarginRight: 12,
+      }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { ok: boolean; display: Record<string, number | boolean> }
+    expect(body.ok).toBe(true)
+    // A field the route forgot would still read its old value here.
+    expect(body.display).toMatchObject({
+      size: 200,
+      right: 30,
+      bottom: 40,
+      visible: true,
+      bubbleScale: 1.5,
+      edgeMarginLeft: 60,
+      edgeMarginRight: 12,
+    })
   })
 
   it('destroys the connection on an over-limit body instead of answering JSON', async () => {

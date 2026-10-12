@@ -597,11 +597,17 @@ export function makePetRoutes(deps: { service: PetService; ctx: Context; assetCa
       ...(typeof body.right === 'number' ? { right: body.right } : {}),
       ...(typeof body.bottom === 'number' ? { bottom: body.bottom } : {}),
       ...(typeof body.visible === 'boolean' ? { visible: body.visible } : {}),
-    })),
+      ...(typeof body.bubbleScale === 'number' ? { bubbleScale: body.bubbleScale } : {}),
+      // The edge margins are display fields like the position ones, so they
+      // belong on this endpoint too. Omitting them silently dropped the write:
+      // the caller saw `{ ok: true }` and the value never changed.
+      ...(typeof body.edgeMarginLeft === 'number' ? { edgeMarginLeft: body.edgeMarginLeft } : {}),
+      ...(typeof body.edgeMarginRight === 'number' ? { edgeMarginRight: body.edgeMarginRight } : {}),
+    }, typeof body.petId === 'string' && body.petId !== '' ? body.petId : undefined)),
     postRoute(ctx, PET_API_PREFIX + '/set-name', (body) => {
       const name = body.name
       if (typeof name !== 'string') return Promise.reject(new Error('invalid-name'))
-      return service.setName(name)
+      return service.setName(name, typeof body.petId === 'string' && body.petId !== '' ? body.petId : undefined)
     }),
     postRoute(ctx, PET_API_PREFIX + '/set-skin', (body) => {
       const skin = body.skin
@@ -612,6 +618,31 @@ export function makePetRoutes(deps: { service: PetService; ctx: Context; assetCa
       const petId = body.petId
       if (typeof petId !== 'string') return Promise.reject(new Error('invalid-pet'))
       return service.setPetId(petId)
+    }),
+    // Autonomy switch: detaches (or reattaches) every pet from the DSH session
+    // lifecycle. Takes effect on the next poll — the service tears the session
+    // listeners down or installs them immediately.
+    postRoute(ctx, PET_API_PREFIX + '/set-autonomous', (body) => {
+      const autonomous = body.autonomous
+      if (typeof autonomous !== 'boolean') return Promise.reject(new Error('invalid-autonomous'))
+      return service.setAutonomous(autonomous)
+    }),
+    // Multi-pet coexistence: replace the whole on-screen list in one call, so
+    // adding a second pet and moving both is a single atomic write rather than
+    // a sequence of partial states the poll could observe halfway through.
+    // Each entry is shape-checked here; the service drops unknown ids.
+    postRoute(ctx, PET_API_PREFIX + '/set-pets', (body) => {
+      const raw = body.pets
+      if (!Array.isArray(raw)) return Promise.reject(new Error('invalid-pets'))
+      const pets = raw.flatMap((entry) => {
+        if (typeof entry !== 'object' || entry === null) return []
+        const record = entry as Record<string, unknown>
+        if (typeof record.id !== 'string') return []
+        const right = typeof record.right === 'number' ? record.right : 0
+        const bottom = typeof record.bottom === 'number' ? record.bottom : 0
+        return [{ id: record.id, right, bottom }]
+      })
+      return service.setPets(pets)
     }),
     // Hover-panel action click (issue #6): the browser half owns no plugin
     // callbacks, so a click on a registered action travels back here and the

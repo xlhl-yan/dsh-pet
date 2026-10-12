@@ -518,8 +518,7 @@ export function ChoiceField(props: FieldProps & {
   inheritLabel: string
   /** Choices rendered in order; `value` is the draft/stored text. */
   choices: ReadonlyArray<{ value: string; label: string }>
-}) {
-  return (
+}) {  return (
     <div className={css.field}>
       <div className={css.head}>
         <label className={css.label} htmlFor={props.id}>{props.label}</label>
@@ -550,6 +549,78 @@ export function ChoiceField(props: FieldProps & {
       <p className={props.invalid ? css.invalid : css.hint}>
         {props.invalid ? props.invalidLabel : props.hint}
       </p>
+    </div>
+  )
+}
+
+/**
+ * A multi-select list: any number of the given choices may be on at once.
+ *
+ * Used where the value is a set rather than a scalar (the on-screen pet list),
+ * which the staged text form cannot express — so this control reports each
+ * toggle through its own callback instead of `onEdit`. At least one choice must
+ * stay on: the last selected row is not removable, because an empty set is not
+ * a state the host accepts.
+ */
+export function MultiChoiceField(props: {
+  /** Stable id for the group, used to associate the label. */
+  id: string
+  /** Visible label. */
+  label: string
+  /** One-line explanation rendered under the control. */
+  hint: string
+  /** Every selectable choice, in render order. */
+  choices: ReadonlyArray<{ value: string; label: string }>
+  /** The currently selected values. */
+  selected: readonly string[]
+  /** Disables every row (read-only document, or an unavailable namespace). */
+  disabled: boolean
+  /** Toggle one value on or off. */
+  onToggle: (value: string) => void
+  /** Copy shown on the row that cannot be turned off (the last selected one). */
+  selectedLabel: string
+}) {
+  const { id, choices, selected, disabled } = props
+  return (
+    <div className={css.field}>
+      <div className={css.head}>
+        <span className={css.label} id={id + '-label'}>{props.label}</span>
+      </div>
+      <div
+        className={css.multiSelect}
+        role="group"
+        aria-labelledby={id + '-label'}
+        data-testid={id}
+      >
+        {choices.length === 0
+          ? <p className={css.multiEmpty}>{props.hint}</p>
+          : choices.map((choice) => {
+              const isOn = selected.includes(choice.value)
+              // The last selected row cannot be turned off: the host keeps at
+              // least one pet, so allowing it would stage a save that silently
+              // does nothing.
+              const isLast = isOn && selected.length === 1
+              return (
+                <button
+                  key={choice.value}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={isOn}
+                  aria-label={choice.label}
+                  data-value={choice.value}
+                  className={isOn ? css.multiOption + ' ' + css.multiOptionSelected : css.multiOption}
+                  disabled={disabled || isLast}
+                  title={isLast ? props.selectedLabel : choice.label}
+                  onClick={() => { props.onToggle(choice.value) }}
+                >
+                  <span className={css.multiBox} aria-hidden="true">{isOn ? '✓' : ''}</span>
+                  <span className={css.multiName}>{choice.label}</span>
+                  <span className={css.multiId}>{choice.value}</span>
+                </button>
+              )
+            })}
+      </div>
+      <p className={css.hint}>{props.hint}</p>
     </div>
   )
 }

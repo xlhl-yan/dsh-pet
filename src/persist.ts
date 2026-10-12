@@ -15,6 +15,27 @@ import type { PetGameplayState } from './gameplay.ts'
 
 export { DEFAULT_PET_ID, DEFAULT_PET_NAME } from './defaults.ts'
 
+/**
+ * One pet present on screen (multi-pet coexistence). Position is per-instance:
+ * the same pet id may not appear twice, but two different pets each keep their
+ * own inset so dragging one never moves the other.
+ */
+export interface PetInstance {
+  /** Registry id of the pet. */
+  id: string
+  /** Horizontal inset from the viewport right edge, px. */
+  right: number
+  /** Vertical inset from the viewport bottom edge, px. */
+  bottom: number
+}
+
+/**
+ * Ceiling on simultaneously rendered pets. Bounded so a hand-edited or
+ * corrupted `pet.json` cannot ask the browser half for an unbounded sprite
+ * tree (each sprite owns an rAF loop and a DOM subtree).
+ */
+export const PET_MAX_INSTANCES = 8
+
 /** Display configuration the user can tweak. */
 export interface PetDisplayConfig {
   /** Master switch. */
@@ -32,6 +53,17 @@ export interface PetDisplayConfig {
    * 12px baseline the stylesheet was drawn for at the default 160px pet.
    */
   bubbleScale: number
+  /**
+   * Gap kept between a sprite and the LEFT edge of the viewport, px.
+   *
+   * The two edge margins are user-facing because the right value depends on the
+   * surrounding chrome: a pet must clear the sidebar on one layout and barely
+   * needs room on another. They bound where a pet may be dragged or may wander,
+   * and a stored position outside them is pulled back on load.
+   */
+  edgeMarginLeft: number
+  /** Gap kept between a sprite and the RIGHT edge of the viewport, px. */
+  edgeMarginRight: number
 }
 
 export const defaultDisplayConfig: PetDisplayConfig = {
@@ -40,12 +72,27 @@ export const defaultDisplayConfig: PetDisplayConfig = {
   right: 24,
   bottom: 120,
   bubbleScale: 1,
+  // The left margin defaults wider than the right: the float is anchored by
+  // `right`, so the left edge is the one a sidebar or window chrome is most
+  // likely to clip. Both are deliberately modest — a pet parked far from every
+  // edge reads as broken rather than cautious.
+  edgeMarginLeft: 24,
+  edgeMarginRight: 8,
 }
 
 /** Display value bounds (shared by load-time validation and setConfig). */
 export const DISPLAY_SIZE_MIN = 32
 export const DISPLAY_SIZE_MAX = 1024
 export const DISPLAY_INSET_MAX = 10_000
+
+/**
+ * Bounds on the edge margins, px.
+ *
+ * The ceiling keeps a margin from eating the whole viewport (which would pin
+ * every pet to one spot); 400 is far past any layout a user would want.
+ */
+export const EDGE_MARGIN_MIN = 0
+export const EDGE_MARGIN_MAX = 400
 
 /** Bubble typography bounds (issue #1549). */
 export const BUBBLE_SCALE_MIN = 0.5
@@ -85,8 +132,21 @@ export function bubbleScaleFor(display: Pick<PetDisplayConfig, 'size'> & { bubbl
 
 /** Everything persisted for the pet. */
 export interface PetPersist {
-  /** Selected pet id (a registry entry; clamped at service startup). */
+  /**
+   * Primary pet id (a registry entry; clamped at service startup).
+   *
+   * Invariant: when {@link PetPersist.pets} is non-empty this equals
+   * `pets[0].id`. It is kept as a first-class field rather than a derived
+   * getter so every pre-multi-pet read path (`selectedPetId`, gameplay,
+   * naming) keeps working unchanged; {@link withPets} owns the invariant.
+   */
   petId: string
+  /**
+   * Every pet currently on screen, in render order (multi-pet coexistence).
+   * `pets[0]` is the primary pet. A legacy document that predates this field
+   * is migrated to a single-element list on load.
+   */
+  pets: PetInstance[]
   /**
    * Per-pet display names keyed by pet id. A pet without an entry falls back
    * to its manifest displayName, so only user renames are stored here.
@@ -112,6 +172,7 @@ export const PET_NAME_MAX_LENGTH = 20
 export function emptyPersist(): PetPersist {
   return {
     petId: DEFAULT_PET_ID,
+    pets: [{ id: DEFAULT_PET_ID, right: defaultDisplayConfig.right, bottom: defaultDisplayConfig.bottom }],
     names: {},
     skins: {},
     affinity: emptyAffinity(),
@@ -119,6 +180,31 @@ export function emptyPersist(): PetPersist {
     display: { ...defaultDisplayConfig },
     gameplay: {},
   }
+}
+
+/**
+ * Replace the on-screen pet list, keeping the `pets[0]` ↔ `petId` invariant.
+ *
+ * Duplicate ids are dropped (first occurrence wins) and the list is capped at
+ * {@link PET_MAX_INSTANCES}. An empty input is rejected rather than stored: a
+ * pet-less installation has no primary pet, and every pre-multi-pet read path
+ * assumes one exists. Callers that mean "hide everything" set
+ * `display.visible` instead.
+ * @param persist - the document to update.
+ * @param pets - the desired on-screen list, in render order.
+ * @returns a new document; the input is never mutated.
+ */
+export function withPets(persist: PetPersist, pets: readonly PetInstance[]): PetPersist {
+  const seen = new Set<string>()
+  const next: PetInstance[] = []
+  for (const pet of pets) {
+    if (pet.id === '' || seen.has(pet.id)) continue
+    seen.add(pet.id)
+    next.push({ id: pet.id, right: pet.right, bottom: pet.bottom })
+    if (next.length >= PET_MAX_INSTANCES) break
+  }
+  if (next.length === 0) return persist
+  return { ...persist, pets: next, petId: next[0]!.id }
 }
 
 /**
@@ -137,6 +223,50 @@ function finiteNum(value: unknown, fallback: number): number {
 
 /** A persisted document from any schema era (legacy carried a flat `name`). */
 type PetPersistDocument = Partial<PetPersist> & { name?: unknown }
+
+/**
+ * Sanitize the on-screen pet list, migrating a pre-multi-pet document.
+ *
+ * Three eras are accepted, in order of preference:
+ * 1. `pets[]` — the multi-pet shape; each entry's insets are clamped, and the
+ *    entry falls back to the global display insets when absent.
+ * 2. a bare `petId` — the single-pet shape; becomes a one-element list at the
+ *    global display position, which is where that pet was already rendering.
+ * 3. neither — the default pet at the default position.
+ *
+ * Insets are rounded for the same reason the display block rounds them: the
+ * settings schema wants whole pixels while a drag produces fractions.
+ * @param parsed - the raw document.
+ * @param display - the already-sanitized display block (position fallback).
+ * @returns a non-empty, de-duplicated, capped list.
+ */
+function loadPets(parsed: PetPersistDocument, display: PetDisplayConfig): PetInstance[] {
+  const clampInset = (value: unknown, fallback: number): number =>
+    Math.round(clamp(finiteNum(value, fallback), DISPLAY_INSET_MAX))
+  const raw = parsed.pets
+  const candidates: PetInstance[] = []
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (typeof entry !== 'object' || entry === null) continue
+      const record = entry as Partial<PetInstance>
+      if (typeof record.id !== 'string' || record.id.trim() === '') continue
+      candidates.push({
+        id: record.id.trim(),
+        right: clampInset(record.right, display.right),
+        bottom: clampInset(record.bottom, display.bottom),
+      })
+    }
+  }
+  if (candidates.length === 0) {
+    const legacyId = typeof parsed.petId === 'string' && parsed.petId.trim() !== ''
+      ? parsed.petId.trim()
+      : DEFAULT_PET_ID
+    candidates.push({ id: legacyId, right: display.right, bottom: display.bottom })
+  }
+  // Reuse the invariant owner so load and runtime agree on de-duplication and
+  // the cap instead of growing a second, divergent copy of that rule.
+  return withPets({ ...emptyPersist(), display }, candidates).pets
+}
 
 /** Sanitize the per-pet names map (string keys, non-empty trimmed values). */
 function loadPetNames(parsed: PetPersistDocument): Record<string, string> {
@@ -246,6 +376,11 @@ export function loadPetPersist(dir: string = petHomeDir()): PetPersist {
       bottom: Math.round(clamp(finiteNum(rawDisplay.bottom, base.display.bottom), DISPLAY_INSET_MAX)),
       // Fractional on purpose: the multiplier is a ratio, not a pixel count.
       bubbleScale: Math.min(BUBBLE_SCALE_MAX, Math.max(BUBBLE_SCALE_MIN, finiteNum(rawDisplay.bubbleScale, base.display.bubbleScale))),
+      // Whole pixels, and absent on a document written before the margins
+      // existed — which is why they fall back to the defaults rather than to 0
+      // (0 would let a pet sit flush against the edge).
+      edgeMarginLeft: Math.round(Math.min(EDGE_MARGIN_MAX, Math.max(EDGE_MARGIN_MIN, finiteNum(rawDisplay.edgeMarginLeft, base.display.edgeMarginLeft)))),
+      edgeMarginRight: Math.round(Math.min(EDGE_MARGIN_MAX, Math.max(EDGE_MARGIN_MIN, finiteNum(rawDisplay.edgeMarginRight, base.display.edgeMarginRight)))),
     }
     const petId = typeof parsed.petId === 'string' && parsed.petId.trim() !== ''
       ? parsed.petId.trim()
@@ -257,8 +392,13 @@ export function loadPetPersist(dir: string = petHomeDir()): PetPersist {
     if (typeof parsed.name === 'string' && parsed.name.trim() !== '' && names[petId] === undefined) {
       names[petId] = parsed.name.trim().slice(0, PET_NAME_MAX_LENGTH)
     }
+    const pets = loadPets(parsed, display)
     return {
-      petId,
+      // The list owns the primary id; a stored `petId` that disagrees with
+      // `pets[0]` (hand-edited file, or a pet removed while others remain)
+      // must not resurrect a pet that is not on screen.
+      petId: pets[0]!.id,
+      pets,
       names,
       skins: loadPetSkins(parsed),
       affinity,

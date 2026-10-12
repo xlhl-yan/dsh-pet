@@ -111,6 +111,106 @@ function clampOffset(value: number, max: number): number {
 }
 
 /**
+ * The smallest gap kept between a sprite and the viewport edges, px.
+ *
+ * The shipped fallbacks. The live values are user settings
+ * ({@link PetDisplayConfig.edgeMarginLeft} / `edgeMarginRight`), because how
+ * much room a pet needs depends on the surrounding chrome — a sidebar on one
+ * layout, nothing on another. These constants are what an older host (one that
+ * serves no margins) resolves to, and what the tests pin.
+ *
+ * The left margin defaults wider than the right: the float is anchored by
+ * `right`, so the left edge is the one a sidebar is most likely to clip.
+ */
+export const PET_EDGE_MARGIN_RIGHT = 8
+/** Gap kept from the left edge of the viewport, px (see {@link PET_EDGE_MARGIN_RIGHT}). */
+export const PET_EDGE_MARGIN_LEFT = 24
+/** Gap kept from the top and bottom edges, px. */
+export const PET_EDGE_MARGIN_VERTICAL = 8
+
+/** The edge margins in force, as the user configured them. */
+export interface PetEdgeMargins {
+  /** Gap from the left edge, px. */
+  left: number
+  /** Gap from the right edge, px. */
+  right: number
+}
+
+/** The margins a display config implies, falling back per field. */
+export function edgeMarginsOf(display: {
+  edgeMarginLeft?: number
+  edgeMarginRight?: number
+}): PetEdgeMargins {
+  return {
+    left: Number.isFinite(display.edgeMarginLeft) ? display.edgeMarginLeft! : PET_EDGE_MARGIN_LEFT,
+    right: Number.isFinite(display.edgeMarginRight) ? display.edgeMarginRight! : PET_EDGE_MARGIN_RIGHT,
+  }
+}
+
+/**
+ * The `right` offset bounds that keep a sprite fully inside the viewport.
+ *
+ * `right` is a CSS offset from the RIGHT edge, so it grows leftwards: 0 pins the
+ * sprite to the right edge, and the upper bound is what keeps it from being
+ * pushed off the left one. Both bounds account for the sprite's own width —
+ * an earlier drag clamp used a hardcoded 40px, which let a pet be dragged
+ * almost a full body-width past the left edge.
+ *
+ * @param viewportWidth - the viewport width, px.
+ * @param spriteWidth - the rendered sprite width, px.
+ * @param margins - the user's edge margins; the shipped defaults when omitted.
+ * @returns the inclusive `[min, max]` range for `right`.
+ */
+export function petRightBounds(
+  viewportWidth: number,
+  spriteWidth: number,
+  margins: PetEdgeMargins = { left: PET_EDGE_MARGIN_LEFT, right: PET_EDGE_MARGIN_RIGHT },
+): { min: number; max: number } {
+  const min = margins.right
+  // Never invert the range: on a viewport narrower than the sprite plus its
+  // margins, the sprite sits at the left margin rather than at a negative max.
+  const max = Math.max(min, viewportWidth - spriteWidth - margins.left)
+  return { min, max }
+}
+
+/**
+ * The `bottom` offset bounds that keep a sprite fully inside the viewport.
+ * @param viewportHeight - the viewport height, px.
+ * @param spriteHeight - the rendered sprite height, px.
+ * @returns the inclusive `[min, max]` range for `bottom`.
+ */
+export function petBottomBounds(viewportHeight: number, spriteHeight: number): { min: number; max: number } {
+  const min = PET_EDGE_MARGIN_VERTICAL
+  const max = Math.max(min, viewportHeight - spriteHeight - PET_EDGE_MARGIN_VERTICAL)
+  return { min, max }
+}
+
+/**
+ * Clamp a sprite offset into the viewport on both axes.
+ *
+ * The single place both writers (drag and roam) go through, so a pet can never
+ * end up outside the window by one path while the other respects the bounds.
+ * @param offset - the desired `{ right, bottom }` offsets.
+ * @param viewport - the viewport size, px.
+ * @param sprite - the rendered sprite size, px.
+ * @param margins - the user's horizontal edge margins.
+ * @returns the clamped offsets.
+ */
+export function clampPetOffset(
+  offset: { right: number; bottom: number },
+  viewport: { width: number; height: number },
+  sprite: { width: number; height: number },
+  margins?: PetEdgeMargins,
+): { right: number; bottom: number } {
+  const right = petRightBounds(viewport.width, sprite.width, margins)
+  const bottom = petBottomBounds(viewport.height, sprite.height)
+  return {
+    right: clampOffset(Math.max(right.min, offset.right), right.max),
+    bottom: clampOffset(Math.max(bottom.min, offset.bottom), bottom.max),
+  }
+}
+
+/**
  * The status decoration ornament (pet-center M5, #567). Renders the active
  * phase's frame segment as a CSS-background strip at a compact bubble
  * height; prefers-reduced-motion holds the segment's first frame, and a
@@ -372,8 +472,63 @@ export function PetSprite(props: PetSpriteProps): ReactPortal {
   // its track's first frame instead of animating (presentation-only; the
   // animation state machine is untouched).
   const spriteScale = display.size / cell.height
+  const spriteWidth = Math.round(cell.width * spriteScale)
+  const spriteHeight = Math.round(cell.height * spriteScale)
+  // Read by the drag handler, which closes over a single render's props; the
+  // ref keeps it current when the pet is resized mid-drag.
+  const spriteWidthRef = useRef(spriteWidth)
+  spriteWidthRef.current = spriteWidth
+  const spriteHeightRef = useRef(spriteHeight)
+  spriteHeightRef.current = spriteHeight
+  // The user's edge margins. Read through a ref by the drag handler (which
+  // closes over one render's props) and directly by the roam effect, which is
+  // keyed on them.
+  const margins = edgeMarginsOf(display)
+  const edgeMarginsRef = useRef(margins)
+  edgeMarginsRef.current = margins
   const phase = snapshot?.phase ?? 'idle'
-  const animation = snapshot?.animation ?? 'idle'
+  const snapshotAnimation = snapshot?.animation ?? 'idle'
+  /**
+   * Track override for this sprite (the gameplay HUD's mode/touch tracks, and
+   * the ambient roam's walk art). State rather than a ref because the frame
+   * loop is keyed on the animation it plays: switching the override has to
+   * re-run the effect so the new row/track are resolved once instead of every
+   * frame. Only pets that actually draw a 9-row atlas use it — the frames2d and
+   * live2d renderers register their own `bus.setTrack` over this one.
+   */
+  const [trackOverride, setTrackOverride] = useState<PetAnimation | undefined>(undefined)
+  // A dialogue line carries its own animation (a wave for a greeting, a jump
+  // for a taunt). It outranks the shared override slot: a walk that happens to
+  // be in flight must not turn a pet's spoken greeting into a stroll, and the
+  // line's own animation ends with the bubble.
+  const animation = feedback?.animation ?? trackOverride ?? snapshotAnimation
+  // Report the resolved track to whoever owns the bus. This is the pet's real,
+  // visible animation — the snapshot value alone is `idle` whenever the pets run
+  // autonomously, and the override (a roam walk, a gameplay act, a dialogue
+  // line) never reaches the host, so the interaction rules have no other honest
+  // source to read.
+  const onAnimation = props.bus?.onAnimation
+  useEffect(() => {
+    onAnimation?.(animation)
+  }, [onAnimation, animation])
+  useEffect(() => {
+    const bus = props.bus
+    if (bus === undefined) return undefined
+    // Only the sprite2d path owns this slot. The frames2d and live2d mounts
+    // inject a `visual` and register their own `setTrack` (their animation is
+    // driven by their renderer handle, not by this atlas loop); taking the slot
+    // from them would freeze those pets on the atlas. Testing the renderer
+    // rather than "is the slot free" is deliberate: the visual mounts as this
+    // component's child, so its effect can land after this one and a
+    // first-come check would silently steal it.
+    if (definition.renderer !== 'sprite2d' || props.visual !== undefined) return undefined
+    bus.setTrack = (track?: string) => {
+      setTrackOverride(track === undefined ? undefined : track as PetAnimation)
+    }
+    return () => {
+      bus.setTrack = undefined
+    }
+  }, [props.bus, props.visual, definition.renderer])
   const scaleRef = useRef(spriteScale)
   scaleRef.current = spriteScale
   useEffect(() => {
@@ -513,9 +668,13 @@ export function PetSprite(props: PetSpriteProps): ReactPortal {
       if (!draggedRef.current) props.onDraggingChange?.(true)
       draggedRef.current = true
     }
-    const right = clampOffset(drag.right - dx, window.innerWidth - 40)
-    const bottom = clampOffset(drag.bottom - dy, window.innerHeight - 40)
-    setDragPos({ right, bottom })
+    const right = clampPetOffset(
+      { right: drag.right - dx, bottom: drag.bottom - dy },
+      { width: window.innerWidth, height: window.innerHeight },
+      { width: spriteWidthRef.current, height: spriteHeightRef.current },
+      edgeMarginsRef.current,
+    )
+    setDragPos(right)
   }
   const onPointerUp = (): void => {
     if (dragRef.current === null) return
@@ -524,9 +683,37 @@ export function PetSprite(props: PetSpriteProps): ReactPortal {
     if (dragPos !== null) props.onDragEnd(dragPos.right, dragPos.bottom)
   }
 
+  // Pull a persisted position back inside the viewport.
+  //
+  // The clamp on drag/roam only governs NEW movement, so a position written
+  // before those bounds existed (a pet dragged under the old 40px rule, or a
+  // window shrunk since the pet was placed) would otherwise stay out there
+  // forever — which is exactly how a pet ended up with half its body past the
+  // left edge. Re-clamping on mount and on resize also means shrinking the
+  // window brings the pets back into view instead of hiding them.
+  useEffect(() => {
+    const settle = (): void => {
+      const clamped = clampPetOffset(
+        { right: display.right, bottom: display.bottom },
+        { width: window.innerWidth, height: window.innerHeight },
+        { width: spriteWidthRef.current, height: spriteHeightRef.current },
+        edgeMarginsRef.current,
+      )
+      // Only write when the position actually moves: an unconditional write
+      // would persist on every resize and fight a drag in progress.
+      if (clamped.right === display.right && clamped.bottom === display.bottom) return
+      if (dragRef.current !== null || walkRafRef.current !== 0) return
+      setDragPos(clamped)
+      props.onDragEnd(clamped.right, clamped.bottom)
+    }
+    settle()
+    window.addEventListener('resize', settle)
+    return () => window.removeEventListener('resize', settle)
+    // Keyed on the persisted position and size, so a pet moved by the host (or
+    // resized) is re-checked without re-running on every render.
+  }, [display.right, display.bottom, spriteWidth, spriteHeight])
+
   const pos = dragPos ?? { right: display.right, bottom: display.bottom }
-  const spriteWidth = Math.round(cell.width * spriteScale)
-  const spriteHeight = Math.round(cell.height * spriteScale)
 
   // --- roaming ---------------------------------------------------------
   // The gameplay HUD rolls when the pet may wander; this side owns the motion
@@ -557,20 +744,20 @@ export function PetSprite(props: PetSpriteProps): ReactPortal {
     bus.walk = (direction: PetRoamDirection, distance: number, speed: number): number => {
       if (dragRef.current !== null || walkRafRef.current !== 0) return 0
       const current = dragPosRef.current ?? { right: display.right, bottom: display.bottom }
-      // Keep the whole sprite on screen with an 8px breathing margin. `right`
-      // and `bottom` are CSS offsets: right grows leftwards, bottom upwards.
-      const margin = 8
-      const maxRight = Math.max(margin, window.innerWidth - spriteWidth - margin)
-      const maxBottom = Math.max(margin, window.innerHeight - spriteHeight - margin)
       const wanted = { ...current }
       if (direction === 'left') wanted.right = current.right + distance
       else if (direction === 'right') wanted.right = current.right - distance
       else if (direction === 'up') wanted.bottom = current.bottom + distance
       else wanted.bottom = current.bottom - distance
-      const target = {
-        right: Math.max(margin, clampOffset(wanted.right, maxRight)),
-        bottom: Math.max(margin, clampOffset(wanted.bottom, maxBottom)),
-      }
+      // Both writers share one clamp, so a roam cannot leave the sprite
+      // somewhere a drag would have refused. `right` and `bottom` are CSS
+      // offsets: right grows leftwards, bottom upwards.
+      const target = clampPetOffset(
+        wanted,
+        { width: window.innerWidth, height: window.innerHeight },
+        { width: spriteWidth, height: spriteHeight },
+        margins,
+      )
       const travelled = direction === 'left' ? target.right - current.right
         : direction === 'right' ? current.right - target.right
           : direction === 'up' ? target.bottom - current.bottom
@@ -613,7 +800,7 @@ export function PetSprite(props: PetSpriteProps): ReactPortal {
       walkTargetRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one registration per sprite
-  }, [props.bus, definition.id, display.right, display.bottom, spriteWidth])
+  }, [props.bus, definition.id, display.right, display.bottom, spriteWidth, margins.left, margins.right])
   // Bubble typography follows the sprite's own scale (#1549), bounded so a
   // shrunk pet never carries unreadably small text.
   const bubbleScale = bubbleScaleFor(display)
@@ -767,7 +954,18 @@ export function PetSprite(props: PetSpriteProps): ReactPortal {
       </div>
       {props.hud}
       {feedback !== null && (
-        <div key={feedback.at} ref={bubbleRef} className={clsx(styles.bubble, feedback.kind === 'feed' ? styles.bubbleFeed : styles.bubblePet)}>
+        <div
+          key={feedback.at}
+          ref={bubbleRef}
+          className={clsx(
+            styles.bubble,
+            feedback.kind === 'feed' ? styles.bubbleFeed : styles.bubblePet,
+            // A dialogue line gets its own tint: it is the pet talking to
+            // another pet, not a reaction to the user, and the distinction is
+            // what makes an exchange readable at a glance.
+            feedback.kind === 'dialogue' && styles.bubbleDialogue,
+          )}
+        >
           {feedback.text}
         </div>
       )}

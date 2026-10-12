@@ -28,7 +28,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the workspace plugin's Context merge (ctx.uiWorkspace), the
 // multi-instance navigation face that replaced ISessions.open().
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import type { PetDisplayConfig } from '../persist.ts'
+import type { PetDisplayConfig, PetInstance } from '../persist.ts'
 import type { PetGameplayVerbResult, PetInteractResult, PetStateView } from '../service.ts'
 import type { PetInteraction } from '../affinity.ts'
 import type { PetDefinition } from '../registry.ts'
@@ -53,9 +53,18 @@ interface PetHttpApi {
   pets(): Promise<PetDefinition[]>
   interact(kind: PetInteraction): Promise<PetInteractResult>
   setVisible(visible: boolean): Promise<{ ok: true; display: PetDisplayConfig }>
-  setConfig(patch: Partial<PetDisplayConfig>): Promise<{ ok: true; display: PetDisplayConfig }>
-  setName(name: string): Promise<{ ok: true; name: string } | { ok: false; error: string }>
+  /**
+   * Update display config; `petId` scopes the position write to one on-screen
+   * pet so dragging one sprite leaves the others where they are.
+   */
+  setConfig(patch: Partial<PetDisplayConfig>, petId?: string): Promise<{ ok: true; display: PetDisplayConfig }>
+  /** Rename one pet; `petId` defaults host-side to the primary pet. */
+  setName(name: string, petId?: string): Promise<{ ok: true; name: string } | { ok: false; error: string }>
   setPet(petId: string): Promise<{ ok: true; petId: string } | { ok: false; error: string }>
+  /** Replace the on-screen pet list (multi-pet coexistence). */
+  setPets(pets: readonly PetInstance[]): Promise<{ ok: true; pets: PetInstance[] }>
+  /** Detach (or reattach) the pets from the DSH session lifecycle. */
+  setAutonomous(autonomous: boolean): Promise<{ ok: true; autonomous: boolean }>
   panelAction(id: string): Promise<{ ok: boolean; error?: string }>
   setSkin(skin?: string): Promise<{ ok: boolean; error?: string; skin?: string }>
   gameplayTouch(zone?: string): Promise<PetGameplayVerbResult>
@@ -86,9 +95,11 @@ const petApi: PetHttpApi = {
   pets: () => petFetch('/api/pet/pets'),
   interact: (kind) => petFetch('/api/pet/interact', { kind }),
   setVisible: (visible) => petFetch('/api/pet/set-visible', { visible }),
-  setConfig: (patch) => petFetch('/api/pet/set-config', patch),
-  setName: (name) => petFetch('/api/pet/set-name', { name }),
+  setConfig: (patch, petId) => petFetch('/api/pet/set-config', petId === undefined ? patch : { ...patch, petId }),
+  setName: (name, petId) => petFetch('/api/pet/set-name', petId === undefined ? { name } : { name, petId }),
   setPet: (petId) => petFetch('/api/pet/set-pet', { petId }),
+  setPets: (pets) => petFetch('/api/pet/set-pets', { pets }),
+  setAutonomous: (autonomous) => petFetch('/api/pet/set-autonomous', { autonomous }),
   panelAction: (id) => petFetch('/api/pet/panel-action', { id }),
   setSkin: (skin) => petFetch('/api/pet/set-skin', skin === undefined ? {} : { skin }),
   gameplayTouch: (zone) => petFetch('/api/pet/gameplay/touch', zone === undefined ? {} : { zone }),
@@ -536,9 +547,9 @@ export function apply(ctx: ClientContext): void {
         store: petStore,
         ensure: pollNow,
         openSession,
-        pet: () => {
+        pet: (petId) => {
           petApi.interact('pet').then((result) => {
-            setFeedback({
+            setFeedback(petId, {
               text: result.reaction,
               kind: 'pet',
               at: Date.now(),
@@ -547,9 +558,9 @@ export function apply(ctx: ClientContext): void {
             // Ignore transport errors on interactions; the next poll resyncs.
           })
         },
-        feed: () => {
+        feed: (petId) => {
           petApi.interact('feed').then((result) => {
-            setFeedback({
+            setFeedback(petId, {
               text: result.reaction,
               kind: 'feed',
               at: Date.now(),
@@ -572,19 +583,27 @@ export function apply(ctx: ClientContext): void {
             // Ignore; next poll resyncs.
           })
         },
-        dragEnd: (right, bottom) => {
-          petApi.setConfig({ right, bottom }).then(() => {
+        dragEnd: (petId, right, bottom) => {
+          // petId scopes the write to one on-screen pet; without it the host
+          // would move the shared display fallback and drag both sprites.
+          petApi.setConfig({ right, bottom }, petId).then(() => {
             pollNow()
           }, () => {
             // Ignore; next poll resyncs.
           })
         },
-        rename: (name) => {
-          petApi.setName(name).then((result) => {
+        rename: (petId, name) => {
+          petApi.setName(name, petId).then((result) => {
             if (result.ok) pollNow()
           }, () => {
             // Ignore; next poll resyncs.
           })
+        },
+        // A one-off line from a pet's own act: the same bubble channel a
+        // dialogue turn uses, so the pet speaks without a surface of its own.
+        dialogueLine: (petId, text) => {
+          setFeedback(petId, { text, kind: 'dialogue', at: Date.now() })
+          window.setTimeout(() => { setFeedback(petId, null) }, 2600)
         },
         // A panel action click (issue #6) travels back to the host, which
         // dispatches it to the plugin that registered the action. The plugin's
@@ -599,8 +618,8 @@ export function apply(ctx: ClientContext): void {
             // Ignore; next poll resyncs.
           })
         },
-        feedbackDone: () => {
-          setFeedback(null)
+        feedbackDone: (petId) => {
+          setFeedback(petId, null)
         },
         gameplay: {
           touch: (zone) => petApi.gameplayTouch(zone),

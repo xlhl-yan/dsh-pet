@@ -403,6 +403,86 @@
   line-height: 1.5;
 }
 
+/* 多选宠物：一组可勾选的卡片，选中态用品牌色描边与浅底，
+   与单选下拉框的观感保持一致但明确表示"可以多选"。 */
+.multiSelect {
+  flex-direction: column;
+  gap: 6px;
+  display: flex;
+}
+
+.multiOption {
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.multiOption:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.multiOption:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.multiOptionSelected {
+  border-color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 10%, transparent);
+}
+
+.multiOption:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.multiBox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  line-height: 1;
+  color: #fff;
+}
+
+.multiOptionSelected .multiBox {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-brand-primary);
+}
+
+.multiName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multiId {
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.multiEmpty {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .card,
   .header,

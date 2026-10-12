@@ -42,7 +42,7 @@ beforeAll(async () => {
 
   const ctx = new Context()
   const registry = loadPetRegistry({ packageRoot: dir, petsDir: '', dshPetsDir: '' })
-  service = new PetService(ctx, { persistDir: join(dir, 'home'), registry })
+  service = new PetService(ctx, { autonomous: false, persistDir: join(dir, 'home'), registry })
   const routes = makePetRoutes({ service, ctx })
   server = createServer((req, res) => {
     const pathname = (req.url ?? '').split('?')[0] ?? ''
@@ -134,8 +134,12 @@ describe('PetService.registerPanelAction', () => {
 })
 
 describe('PetService status bubble switch', () => {
+  // These cases pin the SESSION-DRIVEN mode's bubble switch. Autonomous mode
+  // serves no status bubbles at all, so the switch only has meaning with the
+  // session lifecycle attached; the mode itself is covered in
+  // autonomous.spec.ts.
   it('serves the shipped default before anyone changes it', async () => {
-    const fresh = new PetService(new Context(), { persistDir: join(dir, 'home-default'), registry: service.registrySnapshot() })
+    const fresh = new PetService(new Context(), { autonomous: false, persistDir: join(dir, 'home-default'), registry: service.registrySnapshot() })
     expect((await fresh.state()).statusBubbles).toBe('auto')
   })
 

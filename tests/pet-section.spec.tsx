@@ -29,13 +29,25 @@ import { PetSettingsSection, PetSettingsCardController, type PetSettingsSectionP
 import { en } from '../src/client/locales.ts'
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([
-    { id: 'whale-girl', displayName: '鲸鱼娘（原版）' },
-    { id: 'whale-girl-refined', displayName: '鲸鱼娘（精致版）' },
-  ]), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  })))
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input)
+    // The card reads the registry (the choices) and the persisted state (what is
+    // actually on screen) from two different endpoints.
+    const body = path === '/api/pet/state'
+      ? {
+          pet: { id: 'whale-girl' },
+          pets: [{ id: 'whale-girl', right: 24, bottom: 120 }],
+          display: { visible: true, right: 24, bottom: 120 },
+        }
+      : [
+          { id: 'whale-girl', displayName: '鲸鱼娘（原版）' },
+          { id: 'whale-girl-refined', displayName: '鲸鱼娘（精致版）' },
+        ]
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }))
 })
 
 afterEach(() => {
@@ -135,22 +147,25 @@ describe('PetSettingsSection', () => {
   it('renders every live registry entry in the existing pet selector', async () => {
     render(<PetSettingsSection {...sectionProps(new FakeScope({ petId: 'whale-girl' }))} />)
 
+    // The selector is a multi-select list: every registry entry gets its own
+    // toggle, and the pet currently on screen is the checked one.
     await waitFor(() => {
-      expect(screen.getByLabelText('Pet').textContent).toContain('鲸鱼娘（原版）')
+      expect(screen.getByRole('checkbox', { name: '鲸鱼娘（原版）' })).toBeTruthy()
     })
-    fireEvent.click(screen.getByLabelText('Pet'))
-    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
-      'Inherit',
+    const boxes = screen.getAllByRole('checkbox')
+    expect(boxes.map(box => box.getAttribute('aria-label'))).toEqual([
       '鲸鱼娘（原版）',
       '鲸鱼娘（精致版）',
     ])
+    expect(screen.getByRole('checkbox', { name: '鲸鱼娘（原版）' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('checkbox', { name: '鲸鱼娘（精致版）' }).getAttribute('aria-checked')).toBe('false')
   })
 
   it('user sees no pet directory diagnostics block in the settings page', async () => {
     // Given the registry serves its pets to the settings page
     render(<PetSettingsSection {...sectionProps(new FakeScope({ petId: 'whale-girl' }))} />)
     await waitFor(() => {
-      expect(screen.getByLabelText('Pet').textContent).toContain('鲸鱼娘（原版）')
+      expect(screen.getByRole('checkbox', { name: '鲸鱼娘（原版）' })).toBeTruthy()
     })
 
     // Then the card carries no diagnostics block and never asks the host for one

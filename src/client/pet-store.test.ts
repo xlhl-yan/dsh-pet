@@ -21,7 +21,7 @@ const snapshot = (over: Partial<PetStateView> = {}): PetStateView => ({
     petCooldown: false,
     feedCooldown: false,
   },
-  display: { visible: true, size: 160, right: 24, bottom: 120, bubbleScale: 1 },
+  display: { visible: true, size: 160, right: 24, bottom: 120, bubbleScale: 1, edgeMarginLeft: 24, edgeMarginRight: 8 },
   pet: { id: 'whale-girl', displayName: 'Whale', description: '' },
   name: 'Whale',
   treats: { stocked: 2, max: 10 },
@@ -75,13 +75,47 @@ describe('pet store setSnapshot publish skipping', () => {
     expect(store.getSnapshot().snapshot).not.toBe(base)
     expect(store.getSnapshot().snapshot?.gameplay).toEqual({ stats: { mood: 70 }, mode: 'work' })
 
-    store.actions.setFeedback({ text: '喵', kind: 'pet', at: 1 })
-    expect(store.getSnapshot().feedback).toEqual({ text: '喵', kind: 'pet', at: 1 })
+    store.actions.setFeedback('whale-girl', { text: '喵', kind: 'pet', at: 1 })
+    expect(store.getSnapshot().feedback['whale-girl']).toEqual({ text: '喵', kind: 'pet', at: 1 })
 
     // The next identical poll (a fresh but deep-equal object) skips the
     // publish and keeps the exact snapshot reference the UI already holds.
     const before = store.getSnapshot().snapshot
     store.actions.setSnapshot(snapshot({ gameplay: { stats: { mood: 70 }, mode: 'work' } }))
     expect(store.getSnapshot().snapshot).toBe(before)
+  })
+})
+
+describe('pet store per-pet reaction bubbles', () => {
+  it('keeps each pet\'s bubble separate', () => {
+    const store = createPetStore().create()
+    // With several pets on screen a shared slot made every sprite wear the
+    // same bubble: petting one pet answered from all of them.
+    store.actions.setFeedback('whale-girl', { text: '摸头！', kind: 'pet', at: 1 })
+    store.actions.setFeedback('long-niang', { text: '别碰我', kind: 'pet', at: 2 })
+    const feedback = store.getSnapshot().feedback
+    expect(feedback['whale-girl']?.text).toBe('摸头！')
+    expect(feedback['long-niang']?.text).toBe('别碰我')
+  })
+
+  it('clears only the pet that finished its bubble', () => {
+    const store = createPetStore().create()
+    store.actions.setFeedback('whale-girl', { text: 'A', kind: 'pet', at: 1 })
+    store.actions.setFeedback('long-niang', { text: 'B', kind: 'pet', at: 2 })
+
+    store.actions.setFeedback('whale-girl', null)
+
+    expect(store.getSnapshot().feedback['whale-girl']).toBeUndefined()
+    expect(store.getSnapshot().feedback['long-niang']?.text).toBe('B')
+  })
+
+  it('skips the publish when clearing a pet that has no bubble', () => {
+    const store = createPetStore().create()
+    const listener = vi.fn()
+    store.subscribe(listener)
+    // The expiry path runs on every render tick; a needless write would
+    // republish the store and re-render every sprite.
+    store.actions.setFeedback('whale-girl', null)
+    expect(listener).not.toHaveBeenCalled()
   })
 })

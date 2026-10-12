@@ -23,7 +23,7 @@ import {
   type TreatConfig,
 } from './treats.ts'
 import { RemarkPicker, type PetRemarks } from './remarks.ts'
-import type { PetDisplayConfig, PetPersist } from './persist.ts'
+import { withPets, type PetDisplayConfig, type PetInstance, type PetPersist } from './persist.ts'
 import type { PetGameplayState } from './gameplay.ts'
 
 /** Tuning overrides for the affinity economy. */
@@ -105,10 +105,56 @@ export class PetLedger {
     this.dirty = true
   }
 
-  /** Replace the selected pet id (validation stays a caller concern). */
+  /**
+   * Replace the selected pet id (validation stays a caller concern).
+   *
+   * Kept as the single-pet entry point: it collapses the on-screen list to
+   * that one pet, which is what a pre-coexistence caller means. Multi-pet
+   * callers use {@link setPets} instead.
+   */
   setPetId(petId: string): void {
-    if (this.current.petId === petId) return
-    this.current = { ...this.current, petId }
+    const existing = this.current.pets.find(pet => pet.id === petId)
+    this.setPets([existing ?? {
+      id: petId,
+      right: this.current.display.right,
+      bottom: this.current.display.bottom,
+    }])
+  }
+
+  /**
+   * Replace the on-screen pet list (multi-pet coexistence).
+   *
+   * Delegates the de-duplication, the cap and the `pets[0]` ↔ `petId`
+   * invariant to {@link withPets}, so every writer agrees on the shape instead
+   * of each re-deriving it. An input that resolves to no pets is ignored — the
+   * plugin always renders at least one.
+   * @param pets - desired on-screen pets, in render order.
+   */
+  setPets(pets: readonly PetInstance[]): void {
+    const next = withPets(this.current, pets)
+    if (next === this.current) return
+    this.current = next
+    this.dirty = true
+  }
+
+  /**
+   * Move one on-screen pet, leaving the others where they are.
+   *
+   * The display block's insets stay the fallback for pets added later; a drag
+   * writes here so two pets dragged apart stay apart.
+   * @param petId - registry id of the pet to move.
+   * @param right - horizontal inset from the viewport right edge, px.
+   * @param bottom - vertical inset from the viewport bottom edge, px.
+   */
+  setPetPosition(petId: string, right: number, bottom: number): void {
+    const pets = this.current.pets
+    const index = pets.findIndex(pet => pet.id === petId)
+    if (index < 0) return
+    const current = pets[index]!
+    if (current.right === right && current.bottom === bottom) return
+    const next = [...pets]
+    next[index] = { id: current.id, right, bottom }
+    this.current = { ...this.current, pets: next }
     this.dirty = true
   }
 

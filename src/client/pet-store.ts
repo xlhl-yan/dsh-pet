@@ -10,6 +10,7 @@ import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { EngineStoreHandle, EngineStoreInstance } from '@deepseek-ai/dsh-client-store'
 import type { PetGameplayStateView, PetStateView } from '../service.ts'
 import type { PetInteraction } from '../affinity.ts'
+import type { PetAnimation } from '../state.ts'
 import type { PetDefinition } from '../registry.ts'
 
 /** One transient reaction bubble on the pet. */
@@ -17,9 +18,17 @@ export interface PetFeedback {
   /** Bubble copy. */
   text: string
   /** Interaction kind driving the reaction animation. */
-  kind: PetInteraction | 'none'
+  kind: PetInteraction | 'none' | 'dialogue'
   /** Epoch ms when the bubble appeared (for expiry). */
   at: number
+  /**
+   * Animation to hold while the bubble is up.
+   *
+   * Used by dialogue lines, where the pet should visibly do something (wave a
+   * greeting, jump) rather than only speak. Absent for interaction reactions,
+   * which keep the host-driven phase.
+   */
+  animation?: PetAnimation
 }
 
 /** Pet UI state as consumers see it. */
@@ -32,8 +41,14 @@ export interface PetUiState {
   state: 'loading' | 'ready' | 'error'
   /** Transport error message (for the debug surface), when any. */
   error: string | null
-  /** Active reaction bubble, if any. */
-  feedback: PetFeedback | null
+  /**
+   * Active reaction bubbles, keyed by the pet they belong to.
+   *
+   * Per-pet rather than a single slot: with several pets on screen a shared
+   * slot made every sprite wear the same bubble, so petting one pet answered
+   * from all of them. The key is the registry id, matching the instance list.
+   */
+  feedback: Record<string, PetFeedback>
 }
 
 /** Store write set. */
@@ -44,8 +59,12 @@ export type PetUiActions = {
   setPets: (draft: PetUiState, pets: PetDefinition[]) => void
   /** Mark the fetch lifecycle. */
   setState: (draft: PetUiState, state: PetUiState['state'], error: string | null) => void
-  /** Show a reaction bubble. */
-  setFeedback: (draft: PetUiState, feedback: PetFeedback | null) => void
+  /**
+   * Show (or clear) one pet's reaction bubble.
+   * @param petId - the pet the bubble belongs to.
+   * @param feedback - the bubble, or null to clear that pet's.
+   */
+  setFeedback: (draft: PetUiState, petId: string, feedback: PetFeedback | null) => void
   /**
    * Patch the gameplay slice of the snapshot (verb write-back), so the HUD
    * reflects a touch/mode/buy result immediately instead of waiting one
@@ -62,7 +81,7 @@ export function createPetStore(): EngineStoreHandle<PetUiState, PetUiActions> {
       pets: [],
       state: 'loading',
       error: null,
-      feedback: null,
+      feedback: {},
     }),
     actions: {
       setSnapshot: (draft, snapshot) => {
@@ -85,8 +104,16 @@ export function createPetStore(): EngineStoreHandle<PetUiState, PetUiActions> {
         draft.state = state
         draft.error = error
       },
-      setFeedback: (draft, feedback) => {
-        draft.feedback = feedback
+      setFeedback: (draft, petId, feedback) => {
+        // Clearing a pet that has no bubble is a no-op rather than a write:
+        // the expiry path runs on every render tick, and a needless mutation
+        // would republish the store and re-render every sprite.
+        if (feedback === null) {
+          if (draft.feedback[petId] === undefined) return
+          delete draft.feedback[petId]
+          return
+        }
+        draft.feedback[petId] = feedback
       },
       setGameplayView: (draft, view) => {
         if (draft.snapshot !== null) draft.snapshot = { ...draft.snapshot, gameplay: view }

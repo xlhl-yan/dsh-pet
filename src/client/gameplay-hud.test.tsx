@@ -118,7 +118,7 @@ function snapshot(view: PetGameplayStateView, skin?: string, phase: ActivityPhas
     sessionActive: false,
     sessions: [],
     affinity: { points: 0, rank: '幼鲸', rankEmoji: '*', pets: 0, feeds: 0, turns: 0, petCooldown: false, feedCooldown: false },
-    display: { visible: true, size: 160, right: 24, bottom: 20, bubbleScale: 1 },
+    display: { visible: true, size: 160, right: 24, bottom: 20, bubbleScale: 1, edgeMarginLeft: 24, edgeMarginRight: 8 },
     pet: { id: 'miku', displayName: 'Miku', description: '' },
     name: 'Miku',
     treats: { stocked: 0, max: 5 },
@@ -336,7 +336,7 @@ describe('GameplayHud', () => {
     })
     expect(h.api.touch).toHaveBeenCalledWith('head')
     expect(h.setTrack).toHaveBeenCalledWith('happy')
-    expect(h.store.getSnapshot().feedback?.text).toBe('happy!')
+    expect(h.store.getSnapshot().feedback['miku']?.text).toBe('happy!')
     expect(h.store.getSnapshot().snapshot?.gameplay?.stats.affection).toBe(105)
     // The hold releases after stateMs.
     await act(async () => {

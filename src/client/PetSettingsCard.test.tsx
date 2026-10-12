@@ -82,18 +82,25 @@ afterEach(() => {
 })
 
 describe('pet selection without a Host settings form', () => {
-  it('user saves the selected pet through its persisted API and confirms the read-back', async () => {
+  it('user saves the on-screen pet list through its persisted API and confirms the read-back', async () => {
     // Given the aggregate shell exposes no pet configuration form
     vi.useFakeTimers()
     const { scope, mutate } = unavailableForm()
-    let selected = 'whale-girl'
+    let onScreen = ['whale-girl']
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input)
       if (path === '/api/pet/pets') return response([{ id: 'whale-girl', displayName: '鲸鱼娘' }, { id: 'jyn', displayName: '女仆鲸鱼娘' }])
-      if (path === '/api/pet/state') return response({ pet: { id: selected } })
-      if (path === '/api/pet/set-pet') {
-        selected = JSON.parse(String(init?.body)).petId as string
-        return response({ ok: true, petId: selected })
+      if (path === '/api/pet/state') {
+        return response({
+          pet: { id: onScreen[0] },
+          pets: onScreen.map((id, index) => ({ id, right: 24 + index * 180, bottom: 120 })),
+          display: { visible: true, right: 24, bottom: 120 },
+        })
+      }
+      if (path === '/api/pet/set-pets') {
+        const body = JSON.parse(String(init?.body)) as { pets: { id: string }[] }
+        onScreen = body.pets.map(pet => pet.id)
+        return response({ ok: true, pets: body.pets })
       }
       throw new Error('unexpected request: ' + path)
     })
@@ -103,43 +110,122 @@ describe('pet selection without a Host settings form', () => {
     const face = controller.inject()
     const state = () => face.hooks.petSettingsCard.getSnapshot()
 
-    // When the user chooses the maid whale and clicks Save
-    expect(state()).toMatchObject({ petSelectionFallback: true, petId: { text: 'whale-girl' }, dirty: false })
-    face.edit('petId', '')
-    expect(state()).toMatchObject({ dirty: false, petId: { text: 'whale-girl' } })
-    face.edit('petId', 'jyn')
-    expect(state()).toMatchObject({ dirty: true, petId: { text: 'jyn' } })
+    // When the user adds the maid whale to the on-screen list and clicks Save
+    expect(state()).toMatchObject({ petSelectionFallback: true, selectedPetIds: ['whale-girl'], dirty: false })
+    face.togglePet('jyn')
+    expect(state()).toMatchObject({ dirty: true, selectedPetIds: ['whale-girl', 'jyn'] })
     face.save()
     await vi.waitFor(() => { expect(state().saving).toBe(false) })
 
-    // Then the pet service holds it, the draft clears, and the absent Host form is untouched
-    expect(selected).toBe('jyn')
-    expect(state()).toMatchObject({ dirty: false, failed: false, petId: { text: 'jyn' } })
+    // Then the pet service holds both, the draft clears, and the absent Host
+    // form is untouched
+    expect(onScreen).toEqual(['whale-girl', 'jyn'])
+    expect(state()).toMatchObject({ dirty: false, failed: false, selectedPetIds: ['whale-girl', 'jyn'] })
     expect(mutate).not.toHaveBeenCalled()
-    expect(fetch).toHaveBeenCalledWith('/api/pet/set-pet', expect.objectContaining({ body: JSON.stringify({ petId: 'jyn' }) }))
+    expect(fetch).toHaveBeenCalledWith('/api/pet/set-pets', expect.objectContaining({
+      body: expect.stringContaining('"id":"jyn"'),
+    }))
     controller.dispose()
   })
 
-  it('user keeps the draft when the pet API refuses the selection', async () => {
+  it('gives a newly added pet a position of its own', async () => {
+    // Given one pet on screen at a known spot
+    vi.useFakeTimers()
+    const { scope } = unavailableForm()
+    let sent: { id: string; right: number; bottom: number }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path === '/api/pet/pets') return response([{ id: 'whale-girl', displayName: '鲸鱼娘' }, { id: 'jyn', displayName: '女仆鲸鱼娘' }])
+      if (path === '/api/pet/state') {
+        return response({
+          pet: { id: 'whale-girl' },
+          pets: [{ id: 'whale-girl', right: 24, bottom: 120 }],
+          display: { visible: true, right: 24, bottom: 120 },
+        })
+      }
+      if (path === '/api/pet/set-pets') {
+        const body = JSON.parse(String(init?.body)) as { pets: typeof sent }
+        sent = body.pets
+        return response({ ok: true, pets: body.pets })
+      }
+      throw new Error('unexpected request: ' + path)
+    }))
+    const controller = new PetSettingsCardController(scope)
+    await vi.advanceTimersByTimeAsync(0)
+    const face = controller.inject()
+
+    // When a second pet is added
+    face.togglePet('jyn')
+    face.save()
+    await vi.waitFor(() => { expect(face.hooks.petSettingsCard.getSnapshot().saving).toBe(false) })
+
+    // Then the pet already on screen keeps its spot, and the new one is offset
+    // so it does not land exactly on top of it.
+    expect(sent[0]).toEqual({ id: 'whale-girl', right: 24, bottom: 120 })
+    expect(sent[1]!.id).toBe('jyn')
+    expect(sent[1]!.right).toBeGreaterThan(sent[0]!.right)
+    controller.dispose()
+  })
+
+  it('user keeps the draft when the pet API refuses the list', async () => {
     // Given the Host has no pet form and the pet API still serves its selection
     vi.useFakeTimers()
     const { scope } = unavailableForm()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input)
       if (path === '/api/pet/pets') return response([{ id: 'whale-girl', displayName: '鲸鱼娘' }, { id: 'jyn', displayName: '女仆鲸鱼娘' }])
-      if (path === '/api/pet/state') return response({ pet: { id: 'whale-girl' } })
-      if (path === '/api/pet/set-pet') return response({ ok: false, error: 'unknown-pet' })
+      if (path === '/api/pet/state') {
+        return response({
+          pet: { id: 'whale-girl' },
+          pets: [{ id: 'whale-girl', right: 24, bottom: 120 }],
+          display: { visible: true, right: 24, bottom: 120 },
+        })
+      }
+      if (path === '/api/pet/set-pets') return response({ ok: false, error: 'unknown-pet' })
       throw new Error('unexpected request: ' + path)
     }))
     const controller = new PetSettingsCardController(scope)
     await vi.advanceTimersByTimeAsync(0)
     const face = controller.inject()
-    // When the user saves a selection the pet API refuses
-    face.edit('petId', 'jyn')
+    // When the user saves a list the pet API refuses
+    face.togglePet('jyn')
     face.save()
     await vi.waitFor(() => { expect(face.hooks.petSettingsCard.getSnapshot().saving).toBe(false) })
-    // Then the choice remains staged and the failure is visible
-    expect(face.hooks.petSettingsCard.getSnapshot()).toMatchObject({ dirty: true, failed: true, petId: { text: 'jyn' } })
+    // Then the list remains staged and the failure is visible
+    expect(face.hooks.petSettingsCard.getSnapshot()).toMatchObject({
+      dirty: true,
+      failed: true,
+      selectedPetIds: ['whale-girl', 'jyn'],
+    })
+    controller.dispose()
+  })
+
+  it('refuses to remove the last pet, since the host keeps at least one', async () => {
+    vi.useFakeTimers()
+    const { scope } = unavailableForm()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path === '/api/pet/pets') return response([{ id: 'whale-girl', displayName: '鲸鱼娘' }])
+      if (path === '/api/pet/state') {
+        return response({
+          pet: { id: 'whale-girl' },
+          pets: [{ id: 'whale-girl', right: 24, bottom: 120 }],
+          display: { visible: true, right: 24, bottom: 120 },
+        })
+      }
+      throw new Error('unexpected request: ' + path)
+    }))
+    const controller = new PetSettingsCardController(scope)
+    await vi.advanceTimersByTimeAsync(0)
+    const face = controller.inject()
+
+    // Toggling the only selected pet off is a no-op rather than a staged empty
+    // list, which the host would silently ignore on save.
+    face.togglePet('whale-girl')
+    expect(face.hooks.petSettingsCard.getSnapshot()).toMatchObject({
+      dirty: false,
+      selectedPetIds: ['whale-girl'],
+    })
     controller.dispose()
   })
 })
@@ -230,6 +316,7 @@ describe('pet settings card rendered without a Host settings form', () => {
         discard={face.discard}
         edit={face.edit}
         resetField={face.resetField}
+        togglePet={face.togglePet}
       />,
     )
 
@@ -268,6 +355,7 @@ describe('the status bubble switch on the Host settings form', () => {
         discard={face.discard}
         edit={face.edit}
         resetField={face.resetField}
+        togglePet={face.togglePet}
       />,
     )
     expect(screen.getByLabelText(t('settings.statusBubbles'))).toBeTruthy()
@@ -298,5 +386,82 @@ describe('the status bubble switch on the Host settings form', () => {
       invalid: true,
       statusBubbles: { text: 'maybe', invalid: true },
     })
+  })
+})
+
+describe('the pet list on the Host settings form', () => {
+  /**
+   * The regression this pins: the list is staged OUTSIDE the settings form, so
+   * the form's own dirty plan knows nothing about it. Ticking a pet therefore
+   * left Save disabled and the edit unreachable, because `dirty` came straight
+   * from `shell.dirty`.
+   */
+  it('enables Save when only the pet list changed', async () => {
+    vi.useFakeTimers()
+    const { scope } = readyForm({})
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path === '/api/pet/pets') {
+        return response([{ id: 'whale-girl', displayName: '鲸鱼娘' }, { id: 'jyn', displayName: '女仆鲸鱼娘' }])
+      }
+      if (path === '/api/pet/state') {
+        return response({
+          pet: { id: 'whale-girl' },
+          pets: [{ id: 'whale-girl', right: 24, bottom: 120 }],
+          display: { visible: true, right: 24, bottom: 120 },
+        })
+      }
+      throw new Error('unexpected request: ' + path)
+    }))
+    const controller = new PetSettingsCardController(scope)
+    await vi.advanceTimersByTimeAsync(0)
+    const face = controller.inject()
+    const state = () => face.hooks.petSettingsCard.getSnapshot()
+
+    // Given the served form with nothing staged
+    expect(state()).toMatchObject({ dirty: false, selectedPetIds: ['whale-girl'] })
+
+    // When the user ticks a second pet
+    face.togglePet('jyn')
+
+    // Then the card is dirty, so the Save control is live
+    expect(state()).toMatchObject({ dirty: true, selectedPetIds: ['whale-girl', 'jyn'] })
+    controller.dispose()
+  })
+
+  it('clears a staged list on Discard without touching the form drafts', async () => {
+    vi.useFakeTimers()
+    const { scope } = readyForm({})
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path === '/api/pet/pets') {
+        return response([{ id: 'whale-girl', displayName: '鲸鱼娘' }, { id: 'jyn', displayName: '女仆鲸鱼娘' }])
+      }
+      if (path === '/api/pet/state') {
+        return response({
+          pet: { id: 'whale-girl' },
+          pets: [{ id: 'whale-girl', right: 24, bottom: 120 }],
+          display: { visible: true, right: 24, bottom: 120 },
+        })
+      }
+      throw new Error('unexpected request: ' + path)
+    }))
+    const controller = new PetSettingsCardController(scope)
+    await vi.advanceTimersByTimeAsync(0)
+    const face = controller.inject()
+
+    face.togglePet('jyn')
+    face.edit('size', '240')
+    expect(face.hooks.petSettingsCard.getSnapshot()).toMatchObject({ dirty: true })
+
+    face.discard()
+
+    // The list is dropped AND the form's own staged size goes with it, so
+    // Discard means the same thing on both paths.
+    expect(face.hooks.petSettingsCard.getSnapshot()).toMatchObject({
+      dirty: false,
+      selectedPetIds: ['whale-girl'],
+    })
+    controller.dispose()
   })
 })

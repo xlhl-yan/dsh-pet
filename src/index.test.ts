@@ -31,9 +31,12 @@ describe('pet configuration schema', () => {
       right: 24,
       bottom: 20,
       bubbleScale: 1,
+      edgeMarginLeft: 24,
+      edgeMarginRight: 8,
       enabled: true,
       decorationEnabled: true,
       statusBubbles: 'auto',
+      autonomous: true,
     })
   })
 
@@ -67,10 +70,13 @@ describe('pet configuration schema', () => {
       right: true,
       bottom: true,
       bubbleScale: true,
+      edgeMarginLeft: true,
+      edgeMarginRight: true,
       petId: true,
       enabled: true,
       decorationEnabled: true,
       statusBubbles: true,
+      autonomous: true,
     })
   })
 })
@@ -92,10 +98,13 @@ describe('petSettingsSection', () => {
       right: 24,
       bottom: 20,
       bubbleScale: 1,
+      edgeMarginLeft: 24,
+      edgeMarginRight: 8,
       petId: 'doro',
       enabled: true,
       decorationEnabled: true,
       statusBubbles: 'auto',
+      autonomous: true,
     })
   })
 
